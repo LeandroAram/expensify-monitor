@@ -100,6 +100,10 @@ class TestDetect(unittest.TestCase):
         _, cursor = m.detect(FakeGH([it], complete=False), state, self.now)
         self.assertEqual(cursor, "2026-11-17T23:20:00Z")
 
+    def test_issue_repeated_across_pages_alerted_once(self):
+        found, _ = self.run_detect({"5": {"s": "u"}}, [issue(5), issue(6, title="x"), issue(5)])
+        self.assertEqual(found, [("nueva", 5)])
+
     def test_closed_and_prs_ignored(self):
         pr = dict(issue(10), pull_request={})
         found, _ = self.run_detect({}, [issue(11, state="closed"), pr])

@@ -144,9 +144,12 @@ def detect(gh, state, now):
     issues, complete = gh.paginate(f"/repos/{TARGET_REPO}/issues",
                                    {"state": "all", "sort": "updated", "direction": "asc",
                                     "since": iso(since)}, allow_truncated=True)
+    latest = {}
+    for it in issues:
+        latest[it["number"]] = it
     tracked = state["tracked"]
     found = []
-    for it in issues:
+    for it in latest.values():
         if "pull_request" in it:
             continue
         key = str(it["number"])
