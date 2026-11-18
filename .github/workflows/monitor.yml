@@ -60,7 +60,7 @@ jobs:
           fi
 
       - name: Guardar estado
-        if: ${{ inputs.simular_issue == '' }}
+        if: ${{ !cancelled() && inputs.simular_issue == '' }}
         run: |
           cd state
           git add -A
