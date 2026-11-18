@@ -21,6 +21,8 @@ class FakeGH:
 
     def paginate(self, path, params, max_pages=30, allow_truncated=False):
         if path.endswith("/events"):
+            if self.events == "error":
+                raise RuntimeError("falla historial")
             return self.events.get(int(path.split("/")[-2]), []), True
         return self.issues, self.complete
 
@@ -103,6 +105,11 @@ class TestDetect(unittest.TestCase):
     def test_issue_repeated_across_pages_alerted_once(self):
         found, _ = self.run_detect({"5": {"s": "u"}}, [issue(5), issue(6, title="x"), issue(5)])
         self.assertEqual(found, [("nueva", 5)])
+
+    def test_history_error_does_not_block_reopen(self):
+        found, _ = self.run_detect({"9": {"s": "closed"}, "5": {"s": "u"}},
+                                   [issue(9, reason="reopened"), issue(5)], "error")
+        self.assertEqual(found, [("reapertura", 9), ("nueva", 5)])
 
     def test_closed_and_prs_ignored(self):
         pr = dict(issue(10), pull_request={})

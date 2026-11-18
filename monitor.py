@@ -161,7 +161,11 @@ def detect(gh, state, now):
             entry["r"] = old["r"]
         reopened = False
         if new == QUALIFIED and it.get("state_reason") == "reopened":
-            last = last_reopened(gh, it["number"])
+            try:
+                last = last_reopened(gh, it["number"])
+            except (urllib.error.URLError, RuntimeError) as e:
+                print(f"No se pudo leer el historial de #{it['number']}: {e}")
+                last = None
             if last:
                 already = parse_iso(old["r"]) if "r" in old else baseline_at
                 reopened = last > max(since, already)
