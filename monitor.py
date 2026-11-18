@@ -87,7 +87,8 @@ class GitHub:
             raw = resp.read()
             return (json.loads(raw) if raw else None), resp.headers
 
-    def paginate(self, path, params, max_pages=30):
+    def paginate(self, path, params, max_pages=30, allow_truncated=False):
+        """Devuelve (items, completo). Si se corta sin permiso, falla en vez de perder datos."""
         params = dict(params, per_page=100)
         url, out = path, []
         for _ in range(max_pages):
@@ -95,9 +96,11 @@ class GitHub:
             out.extend(items)
             nxt = re.search(r'<([^>]+)>;\s*rel="next"', headers.get("Link") or "")
             if not nxt:
-                break
+                return out, True
             url, params = nxt.group(1), None
-        return out
+        if not allow_truncated:
+            raise RuntimeError(f"Paginación incompleta en {path} tras {max_pages} páginas")
+        return out, False
 
 
 def load_state(path):
@@ -114,8 +117,8 @@ def save_state(path, state):
 
 
 def baseline(gh, now):
-    issues = gh.paginate(f"/repos/{TARGET_REPO}/issues",
-                         {"state": "open", "labels": ",".join(sorted(REQUIRED_LABELS))})
+    issues, _ = gh.paginate(f"/repos/{TARGET_REPO}/issues",
+                            {"state": "open", "labels": ",".join(sorted(REQUIRED_LABELS))})
     tracked = {}
     for it in issues:
         if "pull_request" in it:
@@ -124,33 +127,50 @@ def baseline(gh, now):
     return {"cursor": iso(now), "baseline_at": iso(now), "tracked": tracked, "alerts": []}
 
 
-def reopened_after(gh, number, since):
-    events = gh.paginate(f"/repos/{TARGET_REPO}/issues/{number}/events", {}, max_pages=5)
-    return any(e.get("event") == "reopened" and parse_iso(e["created_at"]) > since for e in events)
+def last_reopened(gh, number):
+    events, _ = gh.paginate(f"/repos/{TARGET_REPO}/issues/{number}/events", {}, max_pages=20)
+    times = [parse_iso(e["created_at"]) for e in events if e.get("event") == "reopened"]
+    return max(times) if times else None
 
 
 def detect(gh, state, now):
+    """Devuelve (avisos, cursor). Cada aviso es (tipo, issue, entrada de estado a guardar al avisar).
+
+    Las entradas sin aviso se aplican al estado de inmediato; las de los avisos, recién
+    cuando el aviso se entrega (ver main), para reintentarlos si falla la entrega.
+    """
     since = parse_iso(state["cursor"]) - OVERLAP
-    issues = gh.paginate(f"/repos/{TARGET_REPO}/issues",
-                         {"state": "all", "sort": "updated", "direction": "asc", "since": iso(since)})
+    baseline_at = parse_iso(state.get("baseline_at") or state["cursor"])
+    issues, complete = gh.paginate(f"/repos/{TARGET_REPO}/issues",
+                                   {"state": "all", "sort": "updated", "direction": "asc",
+                                    "since": iso(since)}, allow_truncated=True)
     tracked = state["tracked"]
     found = []
     for it in issues:
         if "pull_request" in it:
             continue
         key = str(it["number"])
-        prev = tracked.get(key, {}).get("s")
+        old = tracked.get(key, {})
+        prev = old.get("s")
         new = status_of(it)
+        entry = {"s": new, "p": price_of(it["title"])}
+        if "r" in old:
+            entry["r"] = old["r"]
         reopened = False
-        if new == QUALIFIED and prev in (QUALIFIED, None) and it.get("state_reason") == "reopened":
-            reopened = reopened_after(gh, it["number"], since)
+        if new == QUALIFIED and it.get("state_reason") == "reopened":
+            last = last_reopened(gh, it["number"])
+            if last:
+                already = parse_iso(old["r"]) if "r" in old else baseline_at
+                reopened = last > max(since, already)
+                if reopened or prev == CLOSED:
+                    entry["r"] = iso(last)
         kind = transition(prev, it, reopened)
         if kind:
-            found.append((kind, it))
-        if new != UNQUALIFIED or key in tracked or REQUIRED_LABELS & labels_of(it):
-            tracked[key] = {"s": new, "p": price_of(it["title"])}
-    state["cursor"] = iso(now)
-    return found
+            found.append((kind, it, entry))
+        elif new != UNQUALIFIED or key in tracked or REQUIRED_LABELS & labels_of(it):
+            tracked[key] = entry
+    cursor = now if complete or not issues else parse_iso(issues[-1]["updated_at"])
+    return found, iso(cursor)
 
 
 def ensure_label(gh, name, color):
@@ -239,13 +259,19 @@ def main(argv=None):
         save_state(args.state, state)
         return 0
 
-    found = detect(gh, state, now)
-    for kind, issue in found:
-        link = "(dry-run)" if args.dry_run else notify(gh, kind, issue)
+    found, cursor = detect(gh, state, now)
+    for kind, issue, entry in found:
+        try:
+            link = "(dry-run)" if args.dry_run else notify(gh, kind, issue)
+        except Exception:
+            save_state(args.state, state)
+            raise
         print(f"DETECCIÓN {kind}: #{issue['number']} {issue['title']} -> {link}")
+        state["tracked"][str(issue["number"])] = entry
         state["alerts"] = (state.get("alerts", []) + [
             {"n": issue["number"], "k": kind, "at": iso(now)}])[-200:]
-    print(f"Ejecución OK: {len(found)} detecciones, {gh.calls} llamadas a la API, cursor {state['cursor']}.")
+    state["cursor"] = cursor
+    print(f"Ejecución OK: {len(found)} detecciones, {gh.calls} llamadas a la API, cursor {cursor}.")
     save_state(args.state, state)
     return 0
 
