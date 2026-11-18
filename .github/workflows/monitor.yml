@@ -1,0 +1,70 @@
+name: Monitor Expensify
+
+on:
+  schedule:
+    - cron: "4-59/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      simular_issue:
+        description: "PRUEBA: número de issue de Expensify/App a tratar como recién publicada (vacío = ejecución normal)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+env:
+  TARGET_REPO: Expensify/App
+  NOTIFY_USER: LeandroAram
+  SHUTDOWN_AT: "2026-11-30T23:59:59-03:00"
+  DEVIN_SESSION_URL: https://app.devin.ai/sessions/d297f129bc50410cbf6d6a670ca6707a
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tests
+        run: python -m unittest discover -s tests -t .
+
+      - name: Traer estado (rama estado)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin estado >/dev/null; then
+            git fetch --depth=1 origin estado
+            git worktree add state FETCH_HEAD
+          else
+            git worktree add --detach state
+            git -C state checkout --orphan estado
+            git -C state rm -rfq .
+          fi
+
+      - name: Ejecutar monitor
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIMULATE: ${{ inputs.simular_issue }}
+        run: |
+          if [ -n "$SIMULATE" ]; then
+            python monitor.py --state state/state.json --simulate "$SIMULATE"
+          else
+            python monitor.py --state state/state.json
+          fi
+
+      - name: Guardar estado
+        if: ${{ inputs.simular_issue == '' }}
+        run: |
+          cd state
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -qm "estado $(date -u +%FT%TZ)"
+            git push -q origin HEAD:refs/heads/estado
+          fi
