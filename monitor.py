@@ -149,6 +149,7 @@ def detect(gh, state, now):
         latest[it["number"]] = it
     tracked = state["tracked"]
     found = []
+    retry_from = None
     for it in latest.values():
         if "pull_request" in it:
             continue
@@ -166,6 +167,7 @@ def detect(gh, state, now):
             except (urllib.error.URLError, RuntimeError) as e:
                 print(f"No se pudo leer el historial de #{it['number']}: {e}")
                 last = None
+                retry_from = min(retry_from or now, parse_iso(it["updated_at"]))
             if last:
                 already = parse_iso(old["r"]) if "r" in old else baseline_at
                 reopened = last > max(since, already)
@@ -177,6 +179,8 @@ def detect(gh, state, now):
         elif new != UNQUALIFIED or key in tracked or REQUIRED_LABELS & labels_of(it):
             tracked[key] = entry
     cursor = now if complete or not issues else parse_iso(issues[-1]["updated_at"])
+    if retry_from:
+        cursor = min(cursor, retry_from)
     return found, iso(cursor)
 
 

@@ -11,7 +11,7 @@ import monitor as m
 def issue(n, title="[$250] Bug", labels=("External", "Help Wanted"), state="open", reason=None):
     return {"number": n, "title": title, "labels": [{"name": x} for x in labels],
             "state": state, "state_reason": reason, "html_url": f"https://x/{n}",
-            "created_at": "2026-11-01T00:00:00Z", "comments": 0}
+            "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-17T23:30:00Z", "comments": 0}
 
 
 class FakeGH:
@@ -110,6 +110,12 @@ class TestDetect(unittest.TestCase):
         found, _ = self.run_detect({"9": {"s": "closed"}, "5": {"s": "u"}},
                                    [issue(9, reason="reopened"), issue(5)], "error")
         self.assertEqual(found, [("reapertura", 9), ("nueva", 5)])
+
+    def test_history_error_holds_cursor(self):
+        it = dict(issue(9, reason="reopened"), updated_at="2026-11-17T23:10:00Z")
+        state = {"cursor": "2026-11-17T23:00:00Z", "tracked": {"9": {"s": "q"}}}
+        _, cursor = m.detect(FakeGH([it], "error"), state, self.now)
+        self.assertEqual(cursor, "2026-11-17T23:10:00Z")
 
     def test_closed_and_prs_ignored(self):
         pr = dict(issue(10), pull_request={})
