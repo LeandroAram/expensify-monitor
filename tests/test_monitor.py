@@ -111,6 +111,14 @@ class TestDetect(unittest.TestCase):
                                    [issue(9, reason="reopened"), issue(5)], "error")
         self.assertEqual(found, [("reapertura", 9), ("nueva", 5)])
 
+    def test_history_error_on_closed_reopen_not_repeated(self):
+        found, state = self.run_detect({"9": {"s": "closed"}}, [issue(9, reason="reopened")], "error")
+        self.assertEqual(found, [("reapertura", 9)])
+        ev = {9: [{"event": "reopened", "created_at": "2026-11-17T23:29:00Z"}]}
+        state["cursor"] = "2026-11-17T23:00:00Z"
+        found, _ = self.run_detect(None, [issue(9, reason="reopened")], ev, state)
+        self.assertEqual(found, [])
+
     def test_history_error_holds_cursor(self):
         it = dict(issue(9, reason="reopened"), updated_at="2026-11-17T23:10:00Z")
         state = {"cursor": "2026-11-17T23:00:00Z", "tracked": {"9": {"s": "q"}}}

@@ -167,7 +167,10 @@ def detect(gh, state, now):
             except (urllib.error.URLError, RuntimeError) as e:
                 print(f"No se pudo leer el historial de #{it['number']}: {e}")
                 last = None
-                retry_from = min(retry_from or now, parse_iso(it["updated_at"]))
+                if prev == CLOSED:
+                    entry["r"] = it["updated_at"]
+                else:
+                    retry_from = min(retry_from or now, parse_iso(it["updated_at"]))
             if last:
                 already = parse_iso(old["r"]) if "r" in old else baseline_at
                 reopened = last > max(since, already)
