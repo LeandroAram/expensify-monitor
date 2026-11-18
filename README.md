@@ -17,7 +17,7 @@ Por cada detección crea una issue en este repo con etiqueta `oportunidad`, menc
 
 ## Funcionamiento
 
-- `.github/workflows/monitor.yml`: cada 10 minutos (GitHub puede demorar las ejecuciones programadas), usa solo `GITHUB_TOKEN`.
+- `.github/workflows/monitor.yml`: cada ejecución revisa cada 10 minutos durante unas 5,5 horas y al terminar se relanza sola con `workflow_dispatch`, porque el cron de GitHub puede pasar horas sin correr; el cron queda como respaldo. Usa solo `GITHUB_TOKEN` y es gratis en repos públicos.
 - Estado (cursor + issues seguidas) en la rama `estado`.
 - **Apagado automático**: desde el 30/11/2026 23:59:59 (hora argentina) el script deshabilita el workflow y no vuelve a consultar.
 
