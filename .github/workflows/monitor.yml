@@ -2,7 +2,7 @@ name: Monitor Expensify
 
 on:
   schedule:
-    - cron: "4-59/10 * * * *"
+    - cron: "4,14,24,34,44,54 * * * *"
   workflow_dispatch:
     inputs:
       simular_issue:
@@ -16,7 +16,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: monitor
+  group: ${{ inputs.simular_issue != '' && 'prueba' || 'monitor' }}
   cancel-in-progress: false
 
 env:
@@ -28,7 +28,7 @@ env:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
 
@@ -48,23 +48,43 @@ jobs:
             git -C state rm -rfq .
           fi
 
-      - name: Ejecutar monitor
+      - name: Prueba (simulación)
+        if: ${{ inputs.simular_issue != '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SIMULATE: ${{ inputs.simular_issue }}
-        run: |
-          if [ -n "$SIMULATE" ]; then
-            python monitor.py --state state/state.json --simulate "$SIMULATE"
-          else
-            python monitor.py --state state/state.json
-          fi
+        run: python monitor.py --state state/state.json --simulate "$SIMULATE"
 
-      - name: Guardar estado
-        if: ${{ !cancelled() && inputs.simular_issue == '' }}
+      # El cron de GitHub es poco confiable (a veces pasan horas sin correr), así que cada
+      # ejecución revisa cada 10 min durante ~5,5 h y al terminar se vuelve a lanzar sola.
+      - name: Monitorear en bucle
+        if: ${{ inputs.simular_issue == '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOOP_MINUTES: "330"
+          INTERVAL_SECONDS: "600"
         run: |
-          cd state
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -qm "estado $(date -u +%FT%TZ)"
-            git push -q origin HEAD:refs/heads/estado
+          guardar() {
+            (cd state && git add -A && { git diff --cached --quiet || {
+              git commit -qm "estado $(date -u +%FT%TZ)" && git push -q origin HEAD:refs/heads/estado; }; })
+          }
+          fin=$(( $(date +%s) + LOOP_MINUTES * 60 ))
+          apagado=$(date -d "$SHUTDOWN_AT" +%s)
+          fallas=0
+          while :; do
+            python monitor.py --state state/state.json || fallas=$((fallas + 1))
+            guardar || fallas=$((fallas + 1))
+            if [ "$(date +%s)" -ge "$apagado" ]; then
+              echo "Apagado: no se relanza."
+              exit 0
+            fi
+            [ $(( $(date +%s) + INTERVAL_SECONDS )) -lt "$fin" ] || break
+            sleep "$INTERVAL_SECONDS"
+          done
+          gh workflow run monitor.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            || echo "::warning::No se pudo relanzar; queda el cron como respaldo."
+          if [ "$fallas" -ne 0 ]; then
+            echo "::error::$fallas iteraciones fallaron"
+            exit 1
           fi
